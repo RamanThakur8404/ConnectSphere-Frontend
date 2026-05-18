@@ -5,6 +5,8 @@ node_modules/
 dist/
 dist-ssr/
 build/
+.env.production
+src.bak/
 
 # Test and coverage output
 coverage/
