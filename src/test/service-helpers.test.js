@@ -6,6 +6,7 @@ import {
   getStoryViews,
   inferPlanId,
   isVideoUrl,
+  normalizeStoryList,
   resolveMediaUrl,
   resolveNotificationPath,
   toDisplayMediaUrl,
@@ -88,6 +89,15 @@ describe("notification, story, and payment helpers", () => {
     expect(getStoryViews({ viewsCount: 5 })).toBe(5);
     expect(getStoryViews({ viewCount: 3 })).toBe(3);
     expect(getStoryViews({})).toBe(0);
+  });
+
+  it("normalizes story list response shapes", () => {
+    const story = { storyId: 1, authorId: 7, mediaUrl: "https://cdn.example.com/story.jpg" };
+    expect(normalizeStoryList([story])).toEqual([story]);
+    expect(normalizeStoryList({ data: [story] })).toEqual([story]);
+    expect(normalizeStoryList({ stories: [story] })).toEqual([story]);
+    expect(normalizeStoryList({ 7: { authorId: 7, stories: [story] } })).toEqual([story]);
+    expect(normalizeStoryList(null)).toEqual([]);
   });
 
   it("infers plans and formats INR amounts", () => {
