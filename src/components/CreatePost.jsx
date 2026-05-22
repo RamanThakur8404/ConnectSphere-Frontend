@@ -1,8 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { ImagePlus, Video, Smile, Loader2, X, Film } from "lucide-react";
-import { useState, useRef } from "react";
-import { api } from "@/lib/api";
-import { resolveMediaUrl } from "@/lib/service-helpers";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 
 const EMOJI_LIST = [
@@ -14,6 +12,7 @@ const EMOJI_LIST = [
 export function CreatePost({ user, onSubmit, loading = false, placeholder = "What's on your mind?" }) {
   const [content, setContent] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [mediaFile, setMediaFile] = useState(null);
   const [mediaUrl, setMediaUrl] = useState("");
   const [mediaType, setMediaType] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -24,8 +23,10 @@ export function CreatePost({ user, onSubmit, loading = false, placeholder = "Wha
 
   const handleSubmit = async () => {
     if (!content.trim() && !mediaUrl) return;
-    await onSubmit(content, mediaUrl, mediaType);
+    await onSubmit(content, mediaFile, mediaType);
     setContent("");
+    if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+    setMediaFile(null);
     setMediaUrl("");
     setMediaType(null);
     setIsExpanded(false);
@@ -41,16 +42,15 @@ export function CreatePost({ user, onSubmit, loading = false, placeholder = "Wha
     }
     setUploading(true);
     try {
-      // media.upload(file, uploaderId, postId?) — postId is null for new posts
-      const result = await api.media.upload(file, user.id);
-      const url = resolveMediaUrl(result);
-      if (!url) throw new Error("No URL returned from media service");
-      setMediaUrl(url);
+      // Keep a local preview; Feed uploads after the post ID exists.
+      if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+      setMediaFile(file);
+      setMediaUrl(URL.createObjectURL(file));
       setMediaType(type);
       setIsExpanded(true);
-      toast.success(`${type === "video" ? "Video" : "Image"} uploaded!`);
+      toast.success(`${type === "video" ? "Video" : "Image"} ready`);
     } catch (err) {
-      toast.error(err?.message || "Upload failed — is the media service running?");
+      toast.error(err?.message || "Failed to prepare media");
     } finally {
       setUploading(false);
     }
@@ -67,6 +67,10 @@ export function CreatePost({ user, onSubmit, loading = false, placeholder = "Wha
     if (file) handleFileUpload(file, "video");
     e.target.value = "";
   };
+
+  useEffect(() => () => {
+    if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+  }, [mediaUrl]);
 
   const insertEmoji = (emoji) => {
     const textarea = textareaRef.current;
@@ -106,7 +110,7 @@ export function CreatePost({ user, onSubmit, loading = false, placeholder = "Wha
             ) : (
               <img src={mediaUrl} alt="Attachment" className="w-full max-h-64 object-cover rounded-xl" />
             )}
-            <button type="button" onClick={() => { setMediaUrl(""); setMediaType(null); }} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition" aria-label="Remove media">
+            <button type="button" onClick={() => { if (mediaUrl) URL.revokeObjectURL(mediaUrl); setMediaFile(null); setMediaUrl(""); setMediaType(null); }} className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition" aria-label="Remove media">
               <X className="w-4 h-4" />
             </button>
             <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5">
@@ -144,7 +148,7 @@ export function CreatePost({ user, onSubmit, loading = false, placeholder = "Wha
               </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => { setContent(""); setMediaUrl(""); setMediaType(null); setIsExpanded(false); setShowEmoji(false); }} className="rounded-full px-4 sm:px-6 text-sm">Cancel</Button>
+              <Button variant="outline" onClick={() => { setContent(""); if (mediaUrl) URL.revokeObjectURL(mediaUrl); setMediaFile(null); setMediaUrl(""); setMediaType(null); setIsExpanded(false); setShowEmoji(false); }} className="rounded-full px-4 sm:px-6 text-sm">Cancel</Button>
               <Button disabled={(!content.trim() && !mediaUrl) || loading || uploading} onClick={handleSubmit} className="bg-gradient-to-r from-primary to-secondary hover:from-primary/90 hover:to-secondary/90 text-white rounded-full px-5 sm:px-6 text-sm">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Post"}
               </Button>
