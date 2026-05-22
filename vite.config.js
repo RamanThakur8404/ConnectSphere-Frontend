@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
-const gatewayTarget = process.env.VITE_GATEWAY_TARGET || "http://51.21.142.75:8080";
+const gatewayTarget = process.env.VITE_GATEWAY_TARGET || "http://localhost:8080";
 
 export default defineConfig({
   define: {
