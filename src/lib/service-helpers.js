@@ -105,6 +105,27 @@ export function getStoryViews(story) {
   return story?.viewsCount ?? story?.viewCount ?? 0;
 }
 
+export function normalizeStoryList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+
+  for (const key of ["data", "content", "items", "stories", "results"]) {
+    const nested = normalizeStoryList(payload[key]);
+    if (nested.length > 0) return nested;
+  }
+
+  return Object.values(payload)
+    .flatMap((value) => {
+      if (Array.isArray(value)) return value;
+      if (value && typeof value === "object") {
+        if (Array.isArray(value.stories)) return value.stories;
+        if (Array.isArray(value.items)) return value.items;
+        if (value.mediaUrl || value.storyId || value.id) return [value];
+      }
+      return [];
+    });
+}
+
 export function inferPlanId(subscription, history = []) {
   const amount = Number(subscription?.amount ?? history?.[0]?.amount ?? 0);
   const normalizedAmount = amount >= 10000 ? amount / 100 : amount;
