@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { useState, useEffect, useRef } from "react";
 import { Plus, X, Loader2, Eye, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { getStoryMediaType, getStoryViews, resolveMediaUrl, toDisplayMediaUrl } from "@/lib/service-helpers";
+import { getStoryMediaType, getStoryViews, normalizeStoryList, resolveMediaUrl, toDisplayMediaUrl } from "@/lib/service-helpers";
 
 export function StoriesBar() {
   const { user } = useAuth();
@@ -57,9 +57,9 @@ export function StoriesBar() {
         return;
       }
 
-      const activeStories = await api.media.getActiveStories(allIds).catch(() => []);
+      const activeStories = normalizeStoryList(await api.media.getActiveStories(allIds).catch(() => []));
       const groupedStories = {};
-      (activeStories || []).forEach((story) => {
+      activeStories.forEach((story) => {
         const authorId = story.authorId;
         if (!groupedStories[authorId]) {
           groupedStories[authorId] = { authorId, stories: [] };
