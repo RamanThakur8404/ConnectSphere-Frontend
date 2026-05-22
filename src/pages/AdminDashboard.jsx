@@ -71,6 +71,67 @@ const findUserById = (users, userId) => {
   if (!Number.isInteger(id) || id <= 0) return null;
   return (users || []).find((item) => Number(item.userId || item.id) === id) || null;
 };
+const getNotificationId = (notification) => notification?.notificationId || notification?.id;
+const getNotificationRecipientId = (notification) => notification?.recipientId || notification?.recipientUserId;
+const getNotificationTime = (notification) => notification?.createdAt || notification?.timestamp;
+const getBroadcastGroupKey = (notification) => {
+  const createdTime = Date.parse(getNotificationTime(notification) || "");
+  const minuteBucket = Number.isFinite(createdTime) ? Math.floor(createdTime / 60000) : "unknown";
+  return [
+    notification?.type,
+    notification?.message,
+    notification?.actorId || "",
+    notification?.targetType || "",
+    notification?.targetId || "",
+    notification?.deepLinkUrl || "",
+    minuteBucket,
+  ].join("|");
+};
+const groupAdminNotifications = (notifications) => {
+  const grouped = [];
+  const broadcastsByKey = new Map();
+
+  (notifications || []).forEach((notification) => {
+    const notificationId = getNotificationId(notification);
+    const recipientId = getNotificationRecipientId(notification);
+
+    if (notification?.type !== "BROADCAST") {
+      grouped.push({
+        ...notification,
+        sourceIds: notificationId ? [notificationId] : [],
+        recipientIds: recipientId ? [recipientId] : [],
+        recipientCount: recipientId ? 1 : 0,
+        isGroupedBroadcast: false,
+      });
+      return;
+    }
+
+    const groupKey = getBroadcastGroupKey(notification);
+    let group = broadcastsByKey.get(groupKey);
+    if (!group) {
+      group = {
+        ...notification,
+        sourceIds: [],
+        recipientIds: [],
+        recipientCount: 0,
+        isGroupedBroadcast: false,
+      };
+      broadcastsByKey.set(groupKey, group);
+      grouped.push(group);
+    }
+
+    if (notificationId && !group.sourceIds.includes(notificationId)) {
+      group.sourceIds.push(notificationId);
+    }
+    if (recipientId && !group.recipientIds.includes(recipientId)) {
+      group.recipientIds.push(recipientId);
+    }
+    group.recipientCount = group.recipientIds.length || group.sourceIds.length;
+    group.isGroupedBroadcast = group.sourceIds.length > 1;
+  });
+
+  return grouped;
+};
 
 export default function AdminDashboard() {
   const { user, isLoading: authLoading } = useAuth();
@@ -794,17 +855,28 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteAdminNotification = async (notificationId) => {
+  const handleDeleteAdminNotification = async (notificationIds) => {
+    const idsToDelete = (Array.isArray(notificationIds) ? notificationIds : [notificationIds])
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    if (!idsToDelete.length) return;
+
+    if (idsToDelete.length > 1 && !window.confirm(`Delete this broadcast notification for ${idsToDelete.length} recipients?`)) {
+      return;
+    }
+
     try {
-      await api.notifications.adminDelete(notificationId);
+      await Promise.all(idsToDelete.map((notificationId) => api.notifications.adminDelete(notificationId)));
       await logAdminAction({
         action: "NOTIFICATION_DELETED",
-        details: `Notification #${notificationId} deleted`,
+        details: idsToDelete.length === 1
+          ? `Notification #${idsToDelete[0]} deleted`
+          : `Broadcast notification deleted for ${idsToDelete.length} recipients`,
         targetType: "NOTIFICATION",
-        targetId: Number(notificationId),
+        targetId: idsToDelete.length === 1 ? idsToDelete[0] : null,
       });
-      toast.success("Notification deleted");
-      setAdminNotifications((currentNotifications) => currentNotifications.filter((notification) => (notification.notificationId || notification.id) !== notificationId));
+      toast.success(idsToDelete.length === 1 ? "Notification deleted" : "Broadcast notifications deleted");
+      setAdminNotifications((currentNotifications) => currentNotifications.filter((notification) => !idsToDelete.includes(Number(getNotificationId(notification)))));
     } catch (error) {
       toast.error(error?.message || "Failed to delete notification");
     }
@@ -834,6 +906,7 @@ export default function AdminDashboard() {
   const activeUserIds = getActiveUserIds(allUsers);
   const specificRecipientIds = parseRecipientIds(bulkForm.recipientIds);
   const bulkRecipientCount = bulkForm.audience === "ALL" ? activeUserIds.length : specificRecipientIds.length;
+  const groupedAdminNotifications = groupAdminNotifications(adminNotifications);
   const selectedNotificationRecipient = findUserById(allUsers, notificationForm.recipientId);
   const notificationTargetOptions = getTargetOptionsForType(notificationForm.type);
   const getPaymentStatusClass = (status) => {
@@ -975,13 +1048,15 @@ export default function AdminDashboard() {
               <div className="bg-white rounded-2xl p-6 border border-border shadow-sm">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Bell className="w-5 h-5 text-secondary" /> Latest Notifications</h3>
                 <div className="space-y-3 max-h-64 overflow-y-auto">
-                  {adminNotifications.slice(0, 8).map((notification) => (
-                    <div key={notification.notificationId || notification.id} className="p-3 rounded-xl bg-muted/30">
+                  {groupedAdminNotifications.slice(0, 8).map((notification) => (
+                    <div key={notification.sourceIds?.join("-") || getNotificationId(notification)} className="p-3 rounded-xl bg-muted/30">
                       <div className="text-sm font-medium">{notification.message}</div>
-                      <div className="text-xs text-muted-foreground mt-1">{notification.type} · {new Date(notification.createdAt || notification.timestamp).toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {notification.isGroupedBroadcast ? `BROADCAST - ${notification.recipientCount} recipients` : notification.type} - {new Date(getNotificationTime(notification)).toLocaleString()}
+                      </div>
                     </div>
                   ))}
-                  {adminNotifications.length === 0 && <div className="text-center text-muted-foreground py-8">No notifications found</div>}
+                  {groupedAdminNotifications.length === 0 && <div className="text-center text-muted-foreground py-8">No notifications found</div>}
                 </div>
               </div>
             </div>
@@ -1551,10 +1626,10 @@ export default function AdminDashboard() {
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <div className="space-y-6">
                 <div className="bg-white rounded-2xl p-6 border border-border shadow-sm">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Bell className="w-5 h-5 text-primary" /> Create Notification</h3>
+                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Bell className="w-5 h-5 text-primary" /> Single User Notification</h3>
                   <form onSubmit={handleCreateNotification} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-medium mb-1.5">Recipient</label>
+                      <label className="block text-xs font-medium mb-1.5">Recipient User ID</label>
                       <input type="number" min="1" list="admin-notification-recipients" value={notificationForm.recipientId} onChange={(event) => setNotificationForm({ ...notificationForm, recipientId: event.target.value })} required placeholder="User ID" className="w-full bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30" />
                       <datalist id="admin-notification-recipients">
                         {allUsers.map((item) => (
@@ -1609,18 +1684,18 @@ export default function AdminDashboard() {
                     </div>
                     <textarea value={notificationForm.message} onChange={(event) => setNotificationForm({ ...notificationForm, message: event.target.value })} required placeholder="Notification message" rows={3} className="sm:col-span-2 bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 resize-none" />
                     <Button type="submit" disabled={sendingNotification} className="sm:col-span-2 rounded-xl gap-2">
-                      {sendingNotification ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send Notification
+                      {sendingNotification ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to One User
                     </Button>
                   </form>
                 </div>
 
                 <div className="bg-white rounded-2xl p-6 border border-border shadow-sm">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Users className="w-5 h-5 text-secondary" /> Bulk Notification</h3>
+                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Users className="w-5 h-5 text-secondary" /> Broadcast / Selected Users</h3>
                   <form onSubmit={handleSendBulk} className="grid grid-cols-1 gap-4">
                     <div className="inline-flex rounded-xl bg-muted p-1">
                       {[
                         { value: "ALL", label: "All active users" },
-                        { value: "SPECIFIC", label: "Specific users" },
+                        { value: "SPECIFIC", label: "Selected users" },
                       ].map((option) => (
                         <button
                           key={option.value}
@@ -1641,7 +1716,7 @@ export default function AdminDashboard() {
                         value={bulkForm.recipientIds}
                         onChange={(event) => setBulkForm({ ...bulkForm, recipientIds: event.target.value })}
                         required
-                        placeholder="Recipient IDs, comma or space separated"
+                        placeholder="Multiple recipient IDs, comma or space separated"
                         className="bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30"
                       />
                     )}
@@ -1659,9 +1734,9 @@ export default function AdminDashboard() {
                     <select value={bulkForm.type} onChange={(event) => setBulkForm({ ...bulkForm, type: event.target.value })} className="bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30">
                       {NOTIFICATION_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
                     </select>
-                    <textarea value={bulkForm.message} onChange={(event) => setBulkForm({ ...bulkForm, message: event.target.value })} required placeholder="Broadcast message" rows={3} className="bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 resize-none" />
+                    <textarea value={bulkForm.message} onChange={(event) => setBulkForm({ ...bulkForm, message: event.target.value })} required placeholder={bulkForm.audience === "ALL" ? "Broadcast message" : "Shared message for selected users"} rows={3} className="bg-muted rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 resize-none" />
                     <Button type="submit" disabled={sendingBulk || !bulkRecipientCount} className="rounded-xl gap-2 bg-secondary hover:bg-secondary/90 text-white">
-                      {sendingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to {bulkRecipientCount || 0}
+                      {sendingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send Bulk to {bulkRecipientCount || 0}
                     </Button>
                   </form>
                 </div>
@@ -1682,25 +1757,28 @@ export default function AdminDashboard() {
               <div className="bg-white rounded-2xl p-6 border border-border shadow-sm">
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Bell className="w-5 h-5 text-primary" /> All Notifications</h3>
                 <div className="space-y-3 max-h-[900px] overflow-y-auto">
-                  {adminNotifications.map((notification) => {
-                    const notificationId = notification.notificationId || notification.id;
+                  {groupedAdminNotifications.map((notification) => {
+                    const notificationId = getNotificationId(notification);
+                    const recipientText = notification.isGroupedBroadcast
+                      ? `BROADCAST - ${notification.recipientCount} recipients`
+                      : `${notification.type} - recipient #${getNotificationRecipientId(notification) || "-"}`;
                     return (
-                      <div key={notificationId} className="p-4 rounded-xl bg-muted/30 border border-border">
+                      <div key={notification.sourceIds?.join("-") || notificationId} className="p-4 rounded-xl bg-muted/30 border border-border">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold">{notification.message}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{notification.type} · recipient #{notification.recipientId}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{new Date(notification.createdAt || notification.timestamp).toLocaleString()}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{recipientText}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{new Date(getNotificationTime(notification)).toLocaleString()}</div>
                             {notification.deepLinkUrl && <div className="text-xs text-primary mt-1 truncate">{notification.deepLinkUrl}</div>}
                           </div>
-                          <button type="button" onClick={() => handleDeleteAdminNotification(notificationId)} className="p-2 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
+                          <button type="button" onClick={() => handleDeleteAdminNotification(notification.sourceIds || notificationId)} className="p-2 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
                     );
                   })}
-                  {adminNotifications.length === 0 && <div className="text-center text-muted-foreground py-12">No notifications found</div>}
+                  {groupedAdminNotifications.length === 0 && <div className="text-center text-muted-foreground py-12">No notifications found</div>}
                 </div>
               </div>
             </div>
