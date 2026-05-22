@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/lib/AuthContext";
 import { api } from "@/lib/api";
-import { isVideoUrl, resolveMediaUrl } from "@/lib/service-helpers";
+import { resolveMediaUrl } from "@/lib/service-helpers";
 import { toast } from "sonner";
 import {
   Image, Video, X, Send, Globe, Lock, Users, Hash,
@@ -75,31 +75,42 @@ export default function CreatePostPage() {
     }
     setIsSubmitting(true);
     try {
-      let uploadedUrls = [];
-      for (const file of mediaFiles) {
-        const result = await api.media.upload(file, user.id);
-        const uploadedUrl = resolveMediaUrl(result);
-        if (uploadedUrl) {
-          uploadedUrls.push(uploadedUrl);
-        }
-      }
-
+      const normalizedContent = content.trim() || (mediaFiles.length > 0 ? "Shared a media update" : "");
       const postData = {
         authorId: user.id,
-        content: content.trim(),
+        content: normalizedContent,
         visibility,
         contentWarning,
       };
-      if (uploadedUrls.length > 0) {
-        postData.mediaUrls = uploadedUrls;
-        postData.imageUrl = uploadedUrls.find((url) => !isVideoUrl(url));
-        postData.videoUrl = uploadedUrls.find((url) => isVideoUrl(url));
+      if (mediaFiles.length > 0) {
+        postData.postType = "MEDIA";
       }
       if (scheduledDate) {
         postData.scheduledPublishAt = scheduledDate;
       }
 
-      await api.posts.createPost(postData);
+      const createdPost = await api.posts.createPost(postData);
+      const postId = createdPost?.postId;
+      if (mediaFiles.length > 0 && postId) {
+        const uploadedUrls = [];
+        for (const file of mediaFiles) {
+          const result = await api.media.upload(file, user.id, postId);
+          const uploadedUrl = resolveMediaUrl(result);
+          if (uploadedUrl) {
+            uploadedUrls.push(uploadedUrl);
+          }
+        }
+
+        if (uploadedUrls.length > 0) {
+          await api.posts.updatePost(postId, {
+            content: createdPost.content || normalizedContent,
+            mediaUrls: uploadedUrls,
+            postType: "MEDIA",
+            visibility: createdPost.visibility || visibility,
+            contentWarning,
+          });
+        }
+      }
       toast.success(scheduledDate ? "Post scheduled!" : "Post published!");
       navigate("/feed");
     } catch (err) {

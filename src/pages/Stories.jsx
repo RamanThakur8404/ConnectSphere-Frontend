@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Header } from "@/components/Header";
 import { useAuth } from "@/lib/AuthContext";
 import { api } from "@/lib/api";
-import { resolveMediaUrl, toDisplayMediaUrl } from "@/lib/service-helpers";
+import { normalizeStoryList, resolveMediaUrl, toDisplayMediaUrl } from "@/lib/service-helpers";
 import { toast } from "sonner";
 import {
   Plus, X, Eye, ChevronLeft, ChevronRight, Clock, Image as ImageIcon,
@@ -52,9 +52,9 @@ export default function Stories() {
       followeeIds.push(user.id);
 
       if (followeeIds.length > 0) {
-        const activeStories = await api.media.getActiveStories(followeeIds);
+        const activeStories = normalizeStoryList(await api.media.getActiveStories(followeeIds));
         const grouped = {};
-        (activeStories || []).forEach((story) => {
+        activeStories.forEach((story) => {
           const authorId = story.authorId;
           if (!grouped[authorId]) grouped[authorId] = [];
           grouped[authorId].push(story);

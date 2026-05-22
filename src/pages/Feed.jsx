@@ -7,6 +7,7 @@ import { SuggestedUsers } from "@/components/SuggestedUsers";
 import { StoriesBar } from "@/components/StoriesBar";
 import { useAuth } from "@/lib/AuthContext";
 import { api } from "@/lib/api";
+import { resolveMediaUrl } from "@/lib/service-helpers";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { AlertCircle, Loader2, RefreshCcw } from "lucide-react";
@@ -196,20 +197,32 @@ export default function Feed() {
 
   useEffect(() => { fetchFeed(); fetchTrending(); fetchSuggested(); }, [user]);
 
-  const handleCreatePost = async (content, mediaUrl, mediaType) => {
+  const handleCreatePost = async (content, mediaFile) => {
     if (!user) { toast.error("Please log in"); return; }
     setCreating(true);
     try {
       const trimmedContent = content.trim();
       const payload = {
         authorId: user.id,
-        content: trimmedContent || (mediaUrl ? "Shared a media update" : ""),
+        content: trimmedContent || (mediaFile ? "Shared a media update" : ""),
       };
-      if (mediaUrl) {
-        payload.mediaUrls = [mediaUrl];
+      if (mediaFile) {
         payload.postType = "MEDIA";
       }
-      await api.posts.createPost(payload);
+      const createdPost = await api.posts.createPost(payload);
+      const postId = createdPost?.postId;
+      if (mediaFile && postId) {
+        const uploadResult = await api.media.upload(mediaFile, user.id, postId);
+        const uploadedUrl = resolveMediaUrl(uploadResult);
+        if (!uploadedUrl) throw new Error("No URL returned from media service");
+        await api.posts.updatePost(postId, {
+          content: createdPost.content || payload.content,
+          mediaUrls: [uploadedUrl],
+          postType: "MEDIA",
+          visibility: createdPost.visibility || payload.visibility || "PUBLIC",
+          contentWarning: Boolean(createdPost.contentWarning),
+        });
+      }
       toast.success("Post created!");
       await fetchFeed();
     } catch (e) { toast.error(e.message || "Failed to create post"); }
